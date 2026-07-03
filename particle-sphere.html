@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Particle Sphere</title>
+<style>
+  :root{
+    --bg:#08080b;
+    --ink:#e9e7e2;
+    --dim:#7a7a82;
+    --line:#242429;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:var(--bg);
+    overflow:hidden;
+    font-family:'Iowan Old Style','Palatino Linotype',Georgia,'Times New Roman',serif;
+  }
+
+  #webcam{
+    position:fixed; inset:0; width:100%; height:100%;
+    object-fit:cover;
+    transform:scaleX(-1);
+    display:none;
+    z-index:0;
+    filter:brightness(0.55) saturate(0.9);
+  }
+  #webcam.active{ display:block; }
+
+  canvas#stage{
+    position:fixed; inset:0; z-index:1; display:block;
+  }
+
+  .ui{ position:fixed; z-index:5; }
+
+  .title-block{ top:34px; left:40px; }
+  .title{
+    font-size:26px; letter-spacing:0.5px; color:var(--ink);
+    font-weight:400; margin:0; line-height:1;
+  }
+  .kicker{
+    margin-top:9px; font-family:'Helvetica Neue',Arial,sans-serif;
+    font-size:10.5px; letter-spacing:3px; text-transform:uppercase;
+    color:var(--dim);
+  }
+
+  #toggleCam{
+    top:36px; right:40px;
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--dim);
+    padding:10px 20px;
+    border-radius:2px;
+    cursor:pointer;
+    font-family:'Helvetica Neue',Arial,sans-serif;
+    font-size:10.5px;
+    letter-spacing:2px;
+    text-transform:uppercase;
+    transition:border-color .3s ease, color .3s ease;
+  }
+  #toggleCam:hover{ border-color:#565660; color:var(--ink); }
+  #toggleCam.on{ color:var(--ink); border-color:#565660; }
+
+  #status{
+    bottom:36px; left:40px;
+    font-family:'Helvetica Neue',Arial,sans-serif;
+    font-size:10.5px; letter-spacing:2px; text-transform:uppercase;
+    color:var(--dim);
+    max-width:60vw;
+  }
+
+  #legend{
+    bottom:36px; right:40px;
+    font-family:'Helvetica Neue',Arial,sans-serif;
+    font-size:10px; letter-spacing:1px;
+    color:var(--dim);
+    text-align:right;
+    line-height:1.9;
+    opacity:0.75;
+  }
+  #legend span{ color:#b9b7b0; }
+
+  #chargeRing{
+    top:50%; left:50%; transform:translate(-50%,-50%);
+    pointer-events:none;
+    opacity:0;
+    transition:opacity .25s ease;
+  }
+  #chargeRing circle{ transition:stroke-dashoffset .05s linear; }
+
+  #loading{
+    position:fixed; inset:0; z-index:20;
+    background:var(--bg);
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column;
+    color:var(--dim);
+    font-family:'Helvetica Neue',Arial,sans-serif;
+    font-size:11px; letter-spacing:3px; text-transform:uppercase;
+    transition:opacity .6s ease;
+  }
+  #loading .mark{
+    width:6px; height:6px; border-radius:50%;
+    background:var(--ink); margin-bottom:18px;
+    animation:pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%,100%{ opacity:0.25; transform:scale(1); }
+    50%{ opacity:1; transform:scale(1.6); }
+  }
+</style>
+</head>
+<body>
+
+<video id="webcam" autoplay muted playsinline></video>
+<canvas id="stage"></canvas>
+
+<div id="loading"><div class="mark"></div>INITIALIZING CAMERA</div>
+
+<div class="ui title-block">
+  <p class="title">Particle Sphere</p>
+  <p class="kicker">3000 points · hand driven</p>
+</div>
+
+<button class="ui" id="toggleCam">Webcam BG</button>
+
+<div class="ui" id="status">Show your hand to begin</div>
+
+<div class="ui" id="legend">
+  <div>ONE HAND <span>MOVE / ROTATE</span></div>
+  <div>PINCH + HOLD <span>CHARGE → EXPLODE</span></div>
+  <div>TWO HANDS <span>GROW / SHRINK</span></div>
+  <div>FINGER COUNT <span>COLOR</span></div>
+</div>
+
+<svg class="ui" id="chargeRing" width="150" height="150" viewBox="0 0 150 150">
+  <circle cx="75" cy="75" r="64" fill="none" stroke="#1c1c20" stroke-width="1.5"/>
+  <circle id="chargeProgress" cx="75" cy="75" r="64" fill="none" stroke="#e9e7e2"
+    stroke-width="1.5" stroke-linecap="round"
+    stroke-dasharray="402.1" stroke-dashoffset="402.1"
+    transform="rotate(-90 75 75)"/>
+</svg>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+<script>
+(function(){
+
+  /* ---------------------------------------------------------
+     THREE.JS SCENE
+  --------------------------------------------------------- */
+  const canvas = document.getElementById('stage');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(58, window.innerWidth/window.innerHeight, 0.1, 100);
+  camera.position.z = 6.2;
+
+  const group = new THREE.Group();
+  scene.add(group);
+
+  const PARTICLE_COUNT = 3000;
+  const BASE_RADIUS = 1.75;
+
+  function fibonacciSphere(n, radius){
+    const pts = [];
+    const offset = 2 / n;
+    const increment = Math.PI * (3 - Math.sqrt(5));
+    for(let i=0;i<n;i++){
+      const y = ((i * offset) - 1) + (offset / 2);
+      const r = Math.sqrt(Math.max(0, 1 - y*y));
+      const phi = i * increment;
+      const x = Math.cos(phi) * r;
+      const z = Math.sin(phi) * r;
+      pts.push(new THREE.Vector3(x*radius, y*radius, z*radius));
+    }
+    return pts;
+  }
+
+  const homePositions = fibonacciSphere(PARTICLE_COUNT, BASE_RADIUS);
+
+  const positions = new Float32Array(PARTICLE_COUNT * 3);
+  const colorsArr  = new Float32Array(PARTICLE_COUNT * 3);
+  const velocities = new Float32Array(PARTICLE_COUNT * 3);
+  const reformFrom  = new Float32Array(PARTICLE_COUNT * 3);
+
+  for(let i=0;i<PARTICLE_COUNT;i++){
+    positions[i*3]   = homePositions[i].x;
+    positions[i*3+1] = homePositions[i].y;
+    positions[i*3+2] = homePositions[i].z;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colorsArr, 3));
+
+  function makeSpriteTexture(){
+    const size = 64;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
+    g.addColorStop(0,'rgba(255,255,255,1)');
+    g.addColorStop(0.35,'rgba(255,255,255,0.75)');
+    g.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,size,size);
+    return new THREE.CanvasTexture(c);
+  }
+
+  const material = new THREE.PointsMaterial({
+    size: 0.05,
+    map: makeSpriteTexture(),
+    vertexColors: true,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
+
+  const pointCloud = new THREE.Points(geometry, material);
+  group.add(pointCloud);
+
+  window.addEventListener('resize', ()=>{
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  /* ---------------------------------------------------------
+     COLOR PALETTE (indexed by finger count 0..5)
+  --------------------------------------------------------- */
+  const palette = [
+    [0.52, 0.52, 0.58],   // 0 — fist, neutral slate
+    [0.20, 0.62, 0.95],   // 1 — blue
+    [0.30, 0.85, 0.55],   // 2 — green
+    [0.95, 0.78, 0.20],   // 3 — gold
+    [0.95, 0.40, 0.75],   // 4 — magenta
+    [0.95, 0.28, 0.28],   // 5 — red
+  ];
+  let currentColor = palette[0].slice();
+  let targetColor = palette[0].slice();
+
+  function updateColors(){
+    const col = geometry.attributes.color.array;
+    for(let i=0;i<PARTICLE_COUNT;i++){
+      const v = 0.82 + (i % 9) * 0.02;
+      col[i*3]   = currentColor[0] * v;
+      col[i*3+1] = currentColor[1] * v;
+      col[i*3+2] = currentColor[2] * v;
+    }
+    geometry.attributes.color.needsUpdate = true;
+  }
+  updateColors();
+
+  /* ---------------------------------------------------------
+     STATE MACHINE: idle / charging / exploding / reforming
+  --------------------------------------------------------- */
+  let state = 'idle';
+  let explodeStart = 0;
+  let reformStart = 0;
+  const EXPLODE_DURATION = 900;
+  const REFORM_DURATION  = 1500;
+  const CHARGE_DURATION  = 1100;
+
+  let pinching = false;
+  let chargeStart = 0;
+
+  const sphereTargetPos = new THREE.Vector3(0,0,0);
+  let currentScale = 1;
+  let targetScale = 1;
+  let rotVelX = 0, rotVelY = 0;
+  let prevHandCenter = null;
+
+  function mapRange(v, inMin, inMax, outMin, outMax){
+    const t = THREE.MathUtils.clamp((v - inMin) / (inMax - inMin), 0, 1);
+    return outMin + t * (outMax - outMin);
+  }
+  function easeOutCubic(x){ return 1 - Math.pow(1 - x, 3); }
+  function dist3(a,b){ return Math.hypot(a.x-b.x, a.y-b.y, (a.z||0)-(b.z||0)); }
+
+  function setChargeRing(p){
+    const ring = document.getElementById('chargeRing');
+    const prog = document.getElementById('chargeProgress');
+    const CIRC = 2 * Math.PI * 64;
+    if(p <= 0){
+      ring.style.opacity = 0;
+      prog.setAttribute('stroke-dashoffset', CIRC);
+      return;
+    }
+    ring.style.opacity = 1;
+    prog.setAttribute('stroke-dashoffset', String(CIRC * (1 - p)));
+  }
+
+  function triggerExplosion(){
+    state = 'exploding';
+    explodeStart = performance.now();
+    const pos = geometry.attributes.position.array;
+    for(let i=0;i<PARTICLE_COUNT;i++){
+      let dx = pos[i*3], dy = pos[i*3+1], dz = pos[i*3+2];
+      let len = Math.hypot(dx,dy,dz);
+      if(len < 0.0001){ dx = Math.random()-0.5; dy = Math.random()-0.5; dz = Math.random()-0.5; len = Math.hypot(dx,dy,dz)||1; }
+      dx/=len; dy/=len; dz/=len;
+      const rx = (Math.random()-0.5), ry = (Math.random()-0.5), rz = (Math.random()-0.5);
+      const speed = 5 + Math.random() * 7;
+      const fx = dx*0.55 + rx*0.9;
+      const fy = dy*0.55 + ry*0.9;
+      const fz = dz*0.55 + rz*0.9;
+      const flen = Math.hypot(fx,fy,fz) || 1;
+      velocities[i*3]   = (fx/flen) * speed;
+      velocities[i*3+1] = (fy/flen) * speed;
+      velocities[i*3+2] = (fz/flen) * speed;
+    }
+    setStatus('particles scattering');
+  }
+
+  function setStatus(t){ document.getElementById('status').textContent = t; }
+
+  /* ---------------------------------------------------------
+     HAND TRACKING
+  --------------------------------------------------------- */
+  const videoEl = document.getElementById('webcam');
+  let handsResults = null;
+
+  function handCenter(lm){ return { x: lm[9].x, y: lm[9].y, z: lm[9].z }; }
+
+  function updateTargetPosFromNormalized(pt){
+    const nx = 1 - pt.x; // mirror to match visual selfie view
+    const ny = pt.y;
+    sphereTargetPos.set( (nx - 0.5) * 8.5, -(ny - 0.5) * 5.5, 0 );
+  }
+
+  function countExtendedFingers(lm){
+    let count = 0;
+    const palm = lm[9];
+    const thumbTip = lm[4], thumbMCP = lm[2];
+    if(dist3(thumbTip, palm) > dist3(thumbMCP, palm) * 1.28) count++;
+    const pairs = [[8,6],[12,10],[16,14],[20,18]];
+    for(const [tip, pip] of pairs){
+      if(lm[tip].y < lm[pip].y - 0.02) count++;
+    }
+    return Math.min(count, 5);
+  }
+
+  function processHands(){
+    if(!handsResults || !handsResults.multiHandLandmarks || handsResults.multiHandLandmarks.length === 0){
+      prevHandCenter = null;
+      if(state === 'idle'){
+        setStatus('show your hand to begin');
+        if(pinching){ pinching = false; setChargeRing(0); }
+      }
+      return;
+    }
+
+    const lms = handsResults.multiHandLandmarks;
+
+    if(lms.length >= 2){
+      const c0 = handCenter(lms[0]);
+      const c1 = handCenter(lms[1]);
+      const d = Math.hypot(c0.x - c1.x, c0.y - c1.y);
+      targetScale = mapRange(d, 0.15, 0.85, 0.55, 2.3);
+      const mid = { x:(c0.x+c1.x)/2, y:(c0.y+c1.y)/2 };
+      updateTargetPosFromNormalized(mid);
+      prevHandCenter = null;
+      if(state === 'idle'){
+        setStatus('two hands · scaling sphere');
+        if(pinching){ pinching = false; setChargeRing(0); }
+      }
+      return;
+    }
+
+    // single hand
+    const lm = lms[0];
+    const center = handCenter(lm);
+    updateTargetPosFromNormalized(center);
+
+    if(prevHandCenter){
+      const dx = center.x - prevHandCenter.x;
+      const dy = center.y - prevHandCenter.y;
+      rotVelY += dx * 4.2;
+      rotVelX += dy * 4.2;
+    }
+    prevHandCenter = center;
+
+    const count = countExtendedFingers(lm);
+    targetColor = palette[count] || palette[0];
+
+    const thumb = lm[4], index = lm[8];
+    const pinchDist = dist3(thumb, index);
+    const PINCH_THRESHOLD = 0.06;
+
+    if(state === 'idle'){
+      if(pinchDist < PINCH_THRESHOLD){
+        if(!pinching){ pinching = true; chargeStart = performance.now(); }
+        const elapsed = performance.now() - chargeStart;
+        const p = Math.min(elapsed / CHARGE_DURATION, 1);
+        setChargeRing(p);
+        setStatus('charging');
+        if(p >= 1){
+          triggerExplosion();
+          pinching = false;
+          setChargeRing(0);
+        }
+      } else {
+        if(pinching){ pinching = false; setChargeRing(0); }
+        setStatus('one hand · move & rotate — pinch to charge');
+      }
+    }
+  }
+
+  const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+  hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6
+  });
+  hands.onResults((results) => { handsResults = results; });
+
+  const mpCamera = new Camera(videoEl, {
+    onFrame: async () => { await hands.send({ image: videoEl }); },
+    width: 640,
+    height: 480
+  });
+
+  mpCamera.start().then(() => {
+    const loading = document.getElementById('loading');
+    loading.style.opacity = 0;
+    setTimeout(() => loading.style.display = 'none', 650);
+  }).catch(() => {
+    document.getElementById('loading').innerHTML =
+      '<div style="max-width:280px;text-align:center;line-height:1.7">CAMERA ACCESS UNAVAILABLE<br><span style="opacity:.6">check permissions and reload</span></div>';
+  });
+
+  /* ---------------------------------------------------------
+     WEBCAM BACKGROUND TOGGLE
+  --------------------------------------------------------- */
+  const camBtn = document.getElementById('toggleCam');
+  camBtn.addEventListener('click', () => {
+    videoEl.classList.toggle('active');
+    camBtn.classList.toggle('on');
+  });
+
+  /* ---------------------------------------------------------
+     ANIMATION LOOP
+  --------------------------------------------------------- */
+  let lastT = null;
+
+  function animate(t){
+    requestAnimationFrame(animate);
+    if(lastT === null) lastT = t;
+    const dt = Math.min((t - lastT) / 1000, 0.05);
+    lastT = t;
+
+    processHands();
+
+    group.position.lerp(sphereTargetPos, 0.08);
+    currentScale += (targetScale - currentScale) * 0.08;
+    group.scale.setScalar(currentScale);
+
+    rotVelX *= 0.9; rotVelY *= 0.9;
+    group.rotation.x += rotVelX * dt * 2 + 0.035 * dt;
+    group.rotation.y += rotVelY * dt * 2 + 0.09 * dt;
+
+    for(let k=0;k<3;k++) currentColor[k] += (targetColor[k] - currentColor[k]) * 0.06;
+    updateColors();
+
+    const pos = geometry.attributes.position.array;
+
+    if(state === 'exploding'){
+      const elapsed = t - explodeStart;
+      for(let i=0;i<PARTICLE_COUNT;i++){
+        pos[i*3]   += velocities[i*3]   * dt;
+        pos[i*3+1] += velocities[i*3+1] * dt;
+        pos[i*3+2] += velocities[i*3+2] * dt;
+        velocities[i*3]   *= 0.985;
+        velocities[i*3+1] *= 0.985;
+        velocities[i*3+2] *= 0.985;
+      }
+      geometry.attributes.position.needsUpdate = true;
+      if(elapsed > EXPLODE_DURATION){
+        state = 'reforming';
+        reformStart = t;
+        for(let i=0;i<PARTICLE_COUNT*3;i++) reformFrom[i] = pos[i];
+        setStatus('reforming');
+      }
+    } else if(state === 'reforming'){
+      const elapsed = t - reformStart;
+      const p = easeOutCubic(Math.min(elapsed / REFORM_DURATION, 1));
+      for(let i=0;i<PARTICLE_COUNT;i++){
+        pos[i*3]   = THREE.MathUtils.lerp(reformFrom[i*3],   homePositions[i].x, p);
+        pos[i*3+1] = THREE.MathUtils.lerp(reformFrom[i*3+1], homePositions[i].y, p);
+        pos[i*3+2] = THREE.MathUtils.lerp(reformFrom[i*3+2], homePositions[i].z, p);
+      }
+      geometry.attributes.position.needsUpdate = true;
+      if(p >= 1){
+        state = 'idle';
+        setStatus('one hand · move & rotate — pinch to charge');
+      }
+    } else {
+      const breathe = 1 + Math.sin(t * 0.001) * 0.012;
+      for(let i=0;i<PARTICLE_COUNT;i++){
+        pos[i*3]   = homePositions[i].x * breathe;
+        pos[i*3+1] = homePositions[i].y * breathe;
+        pos[i*3+2] = homePositions[i].z * breathe;
+      }
+      geometry.attributes.position.needsUpdate = true;
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  requestAnimationFrame(animate);
+
+})();
+</script>
+</body>
+</html>
