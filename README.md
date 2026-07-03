@@ -4,6 +4,7 @@ A single-file, framework-free 3D particle sphere (3,000 points) that responds to
 
 No build step, no dependencies to install. Open it in a browser and it just works.
 
+
 ## Gestures
 
 | Gesture | Effect |
@@ -13,6 +14,7 @@ No build step, no dependencies to install. Open it in a browser and it just work
 | Two hands, spread / bring together | Grows / shrinks the sphere |
 | Finger count (0–5) | Changes particle color |
 | Button (top right) | Toggles the webcam as a fullscreen background |
+
 
 ## Running it
 
