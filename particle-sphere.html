@@ -149,9 +149,6 @@
 <script>
 (function(){
 
-  /* ---------------------------------------------------------
-     THREE.JS SCENE
-  --------------------------------------------------------- */
   const canvas = document.getElementById('stage');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -231,9 +228,6 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  /* ---------------------------------------------------------
-     COLOR PALETTE (indexed by finger count 0..5)
-  --------------------------------------------------------- */
   const palette = [
     [0.52, 0.52, 0.58],   // 0 — fist, neutral slate
     [0.20, 0.62, 0.95],   // 1 — blue
@@ -257,9 +251,6 @@
   }
   updateColors();
 
-  /* ---------------------------------------------------------
-     STATE MACHINE: idle / charging / exploding / reforming
-  --------------------------------------------------------- */
   let state = 'idle';
   let explodeStart = 0;
   let reformStart = 0;
@@ -320,16 +311,13 @@
 
   function setStatus(t){ document.getElementById('status').textContent = t; }
 
-  /* ---------------------------------------------------------
-     HAND TRACKING
-  --------------------------------------------------------- */
   const videoEl = document.getElementById('webcam');
   let handsResults = null;
 
   function handCenter(lm){ return { x: lm[9].x, y: lm[9].y, z: lm[9].z }; }
 
   function updateTargetPosFromNormalized(pt){
-    const nx = 1 - pt.x; // mirror to match visual selfie view
+    const nx = 1 - pt.x; 
     const ny = pt.y;
     sphereTargetPos.set( (nx - 0.5) * 8.5, -(ny - 0.5) * 5.5, 0 );
   }
@@ -373,7 +361,6 @@
       return;
     }
 
-    // single hand
     const lm = lms[0];
     const center = handCenter(lm);
     updateTargetPosFromNormalized(center);
@@ -436,18 +423,12 @@
       '<div style="max-width:280px;text-align:center;line-height:1.7">CAMERA ACCESS UNAVAILABLE<br><span style="opacity:.6">check permissions and reload</span></div>';
   });
 
-  /* ---------------------------------------------------------
-     WEBCAM BACKGROUND TOGGLE
-  --------------------------------------------------------- */
   const camBtn = document.getElementById('toggleCam');
   camBtn.addEventListener('click', () => {
     videoEl.classList.toggle('active');
     camBtn.classList.toggle('on');
   });
 
-  /* ---------------------------------------------------------
-     ANIMATION LOOP
-  --------------------------------------------------------- */
   let lastT = null;
 
   function animate(t){
